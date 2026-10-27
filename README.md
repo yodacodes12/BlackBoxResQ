@@ -1,100 +1,79 @@
-# BlackBoxResQ — Flight Data Recovery & Investigation System
+# BlackBoxResQ Integrated Sensor Monitoring and Data Recovery
 
-> **Research prototype. Not certified aviation equipment.** All flight data, failures, availability indices and recovery
-> statistics are **synthetic** and produced by a deterministic simulator. No hardware, external API or network is required.
+> Educational research prototype. Not certified aviation equipment. Telemetry and fault scenarios are synthetic. No physical sensors, aircraft interface, or flight-control commands are supported.
 
-Concept: a primary recorder, an independent backup recorder and a remote data copy record the same flight; a recovery
-engine merges whatever survives, verifies it and reports exactly what was and was not recovered.
+BlackBoxResQ combines a synthetic sensor-health bench with redundant flight-data recording and recovery. It validates a versioned telemetry envelope, compares deterministic detectors, links alerts to sample evidence, records simulator runs, and exports or replays telemetry.
 
 ## Run
 
-Frontend (works on its own — the backend is optional):
+Frontend:
+
 ```bash
 npm install
-npm run dev        # http://localhost:5173
-npm run typecheck  # tsc --noEmit
-npm test           # vitest (engine + protocol tests)
-npm run build      # typecheck + production build
+npm run dev
+npm run typecheck
+npm test
+npm run build
 ```
-Backend (persists recovery tests and the audit trail to SQLite):
+
+Optional local backend for recovery tests and audit events:
+
 ```bash
 cd backend
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn app.main:app --port 8000   # DB file: backend/data/blackboxresq.db
-.venv/bin/python -m pytest -q                # backend tests
+.venv/bin/uvicorn app.main:app --port 8000
 ```
-With both running, the Vite dev server proxies `/api` to port 8000. The Reports page shows backend status; results created while
-the backend is down stay in memory and upload automatically once it is reachable. API: `GET /api/health`, `POST/GET /api/tests`,
-`GET /api/tests/{id}`, `POST/GET /api/events` (interactive docs at `/docs`). There is **no authentication** — local prototype use only;
-the server assigns test ids (`RT-###`) so concurrent sessions cannot collide.
 
-## Status by phase
+On Windows, set `OPENAI_API_KEY` as a user environment variable before starting the backend (Windows Search → **Edit environment variables for your account** → **New** under User variables). Restart the terminal after saving the variable. The backend reads the key locally and sends selected telemetry to the OpenAI Responses API only when **Analyze latest samples** is clicked on Sensor Health. The dashboard sends at most 30 samples per request. The default model is `gpt-6-astra`; set `BBQ_OPENAI_MODEL` in the backend environment to select another model available to your API account. Do not put the key in frontend code, `.env` files committed to the project, or telemetry exports.
 
-| Phase | Scope | Status |
-|---|---|---|
-| 1 | UI foundation, 5 pages, design system | Done |
-| 2 | Shared simulation engine, all failure controls | Done |
-| 3 | Recovery engine (CRC, gaps, duplicates, conflicts, merge, CSV) | Done |
-| 4 | Recovery history, CSV, print-ready report | Done. PDF = browser "Save as PDF" from the print dialog (no PDF library) |
-| 5 | FastAPI + SQLite persistence | Done (tests + audit events) |
-| 6 | Hardware-readiness | Specs + codecs + `RecorderSource` interface only. **No hardware integration** — see `docs/PROTOCOL.md`, `docs/ESP32_RECORDERS.md` |
+Windows backend commands (run from the project root in a new PowerShell window):
+
+```powershell
+cd backend
+py -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m uvicorn app.main:app --port 8000
+```
+
+Run `npm install` and `npm run dev` from the project root in a second terminal.
+
+If `OPENAI_API_KEY` is missing or the AI service fails, the UI reports the issue and the deterministic monitors keep working. The GPT response is an explanatory summary only; it is not a trained sensor fault detector, calibrated confidence, diagnosis, or operational instruction. Use synthetic data only; imported replay samples are sent to OpenAI if you request analysis.
+
+The backend is a local prototype with no authentication. It does not persist complete telemetry runs; use telemetry JSON/CSV export to retain or replay those runs.
+
+## Requirements fit
+
+The app includes a versioned schema, UTC and monotonic timestamps, sequence/source/units/provenance, finite/range validation, and visible batch gap/duplicate/out-of-order errors. The Sensor Health page offers simulation-only bias, drift, spike, noise, frozen, dropout, message disorder, delayed, compound, and normal turbulence-like scenarios; threshold/persistence and median-residual CUSUM detectors; uncertainty-aware states; sample-linked alerts; telemetry replay; run stop/close; JSON/CSV export; and synthetic-run evaluation metrics. See [docs/REQUIREMENT_TRACEABILITY.md](docs/REQUIREMENT_TRACEABILITY.md) for implementation mapping and remaining blocked evidence.
+
+The dashboard includes an on-demand GPT assistant that explains a bounded telemetry window alongside deterministic detector outputs. It does not replace those monitors or claim a validated AI detector, calibrated confidence, or aircraft suitability. See [docs/REQUIREMENTS_GAP_ANALYSIS.md](docs/REQUIREMENTS_GAP_ANALYSIS.md) for coverage and known limits.
+
+## Pages
+
+- **Overview**: recorder status, synthetic telemetry charts, recovery summary and event feed.
+- **Sensor Health**: channel quality, fault injection, detector comparison, alerts, replay, export and evaluation.
+- **Recovery Lab**: CRC verification, sequence-gap recovery, duplicate/conflict analysis and reconstructed export.
+- **Failure Simulation**: shared recorder simulation, stop/close, storage/network/power failure and recovery controls.
+- **Investigation Reports**: recovery history, audit events and print-ready reports.
 
 ## Architecture
 
-```
-src/lib/        pure, framework-free logic (unit-tested)
-  crc.ts          CRC-32 (error detection only, not authentication)
-  record.ts       payload canonicalisation, checksum, structural validation (parseRecord)
-  generator.ts    seeded synthetic flight (climb/cruise/descent)
-  simulation.ts   shared state + reducer: recorders, network, power, remote batches/acks, audit log
-  scenarios.ts    deterministic scripted scenarios + headless runner (same reducer as live sim)
-  availability.ts illustrative survivability assumptions (editable constants)
-  recovery.ts     merge/validate engine and metrics
-  csv.ts, reports.ts, status.ts, api.ts
-  hardware.ts     proposed wire-protocol codec + RecorderSource interface (no transport)
-src/state/SimContext.tsx   one useReducer shared by all pages; 200 ms tick timer
-src/state/usePersistence.ts  optional backend sync
-backend/app/               FastAPI + SQLite (main.py, db.py) and protocol.py reference decoder
-src/pages/                 Overview, Location, RecoveryLab, FailureLab, Reports (hash routing, no router dependency)
-```
+- `src/lib/sensorMonitoring.ts`: versioned telemetry validation, fault injection, threshold/persistence and median-residual CUSUM, alerts and metrics.
+- `src/lib/simulation.ts`: shared recorder/network/power state and deterministic recording lifecycle.
+- `src/lib/recovery.ts`: CRC-aware multi-source merge with gaps, duplicates, conflicts and explicit missing values.
+- `src/lib/scenarios.ts`: deterministic recorder/recovery scenarios without aircraft-location or survivability assumptions.
+- `src/state/SimContext.tsx`: shared React reducer and simulation clock.
+- `src/pages/`: Overview, SensorHealth, RecoveryLab, FailureLab and Reports.
+- `backend/app/`: optional FastAPI/SQLite persistence plus the OpenAI Responses API adapter for on-demand explanations.
+- `docs/PROTOCOL.md` and `docs/ESP32_RECORDERS.md`: design proposals and reference decoding only; no device transport is implemented.
 
-## Data schema
+## Telemetry schema
 
-`FlightRecord`: `flight_id, sequence_id, timestamp (ISO-8601), altitude (ft), speed (kt), pitch, roll, yaw (deg), source_id, integrity_checksum`.
-The checksum is CRC-32 (8 hex chars) over `flight_id|sequence_id|timestamp|altitude|speed|pitch|roll|yaw` — `source_id` is excluded
-so copies from different sources share a checksum. Sequence IDs drive gap detection; timestamps drive chronology.
+Each schema 1.0 sample includes `run_id`, `sequence`, `timestamp_utc`, `monotonic_ms`, `source`, explicit units, five synthetic signals, and quality/provenance flags. The sample signal set is a software fixture, not a validated aircraft sensor suite. Speed is generated simulator data; barometric pressure alone is never treated as airspeed.
 
-Separate metadata in `SimState`: recorder state/media, network state, power state, remote queue / in-flight / acknowledged batches, events (audit trail), recovery tests.
+## Limits
 
-## Simulation rules (documented assumptions)
-
-- 1 record per simulated second per source; default flight 600 records, seed `20260101`. Same seed ⇒ identical data. Reset restores that state (recovery test history is kept).
-- Recorders fail independently. A failed recorder stops writing; its already-stored records stay readable unless media is marked destroyed.
-- Network loss never stops local recording. Records queue; remote sends batches of 10 and each batch is acknowledged one tick later. A batch unacknowledged at disconnect is retransmitted on restore, so the remote log gets **duplicates**, which recovery detects. The final partial batch is not sent at flight end.
-- Abrupt power loss: primary fails with its last 2 writes torn (CRC fail); comms queue and unacknowledged state are lost; backup has independent power.
-- Fault injection is deterministic (every 12th of last 60 records; 10-record gap ending 20 from the tail; needs ≥ 30 records).
-- Damage/fire scenarios apply an assumption-based availability index (`availability.ts`): index < 0.5 ⇒ unrecoverable, < 0.75 ⇒ degraded (deterministic corrupted records).
-
-## Recovery semantics
-
-Per expected sequence ID `0..expected-1`:
-
-| Status | Meaning |
-|---|---|
-| validated | ≥1 CRC-valid copy and all valid copies agree |
-| inconsistent | valid copies disagree; shown value is highest-priority source, flagged, every variant listed in Conflicts |
-| corrupted | copies exist but all fail CRC |
-| missing | no surviving copy (exported with empty values — never invented) |
-
-Recovery % = validated ÷ expected. Data loss % = (missing + corrupted) ÷ expected. Malformed input (wrong type, NaN, bad checksum format, wrong flight id) is rejected and counted, never thrown.
-Estimation of missing data is intentionally **not** implemented.
-
-## Known limitations
-
-- Without the backend, state is in memory and is lost on reload. The live simulation itself is never persisted (only recovery tests and events).
-- Printing relies on the browser: pick "Save as PDF" as the destination. Layout was verified with Chromium's PDF output only.
-- Backend has no auth, rate limiting or schema migrations; payloads are stored as JSON blobs. Not for deployment as-is.
-- Survivability indices are illustrative ordinal parameters, not probabilities or structural analysis.
-- Recovery "time" is browser processing time. CRC-32 does not detect deliberate tampering.
-- Hardware protocol is a draft with open items listed in `docs/PROTOCOL.md`; nothing has run on an ESP32.
-- Single frontend bundle ~670 kB (Recharts); not code-split.
+- Sensor thresholds and broad payload bounds are illustrative software parameters, not validated operating limits.
+- The shown evaluation uses injected synthetic fault labels from the same run. It is not held-out research evidence; no real dataset split, confidence calibration, or aircraft generalization has been established.
+- No live device transport, full telemetry backend persistence, durable browser recording beyond the current tab session, large-file stress evidence, trained AI detector, or actuator interface is included.
+- CRC-32 detects accidental corruption only; it is not authentication. The optional backend has no auth or schema migrations.
+- No aircraft control, warning-system replacement, certification, airworthiness or crash-survivability claim is made.
